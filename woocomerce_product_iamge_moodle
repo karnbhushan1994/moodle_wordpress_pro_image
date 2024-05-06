@@ -1,0 +1,128 @@
+/** working code */
+/**
+ * Register an image from a given path in the WordPress Media Library.
+ *
+ * @param string $image_path Path to the image file relative to the WordPress uploads directory.
+ * @return int|WP_Error Attachment ID on success, or WP_Error on failure.
+ */
+function register_image_as_attachment($image_path)
+{
+    $upload_dir = wp_upload_dir();
+    $image_filepath = $upload_dir['basedir'] . '/' . $image_path;
+    echo $image_filepath;
+
+
+    if (!file_exists($image_filepath)) {
+        return new WP_Error('file_not_found', 'File does not exist');
+    }
+
+    $filetype = wp_check_filetype(basename($image_filepath), null);
+    $attachment = array(
+        'guid'           => $upload_dir['baseurl'] . '/' . $image_path,
+        'post_mime_type' => $filetype['type'],
+        'post_title'     => preg_replace('/\.[^.]+$/', '', basename($image_filepath)),
+        'post_content'   => '',
+        'post_status'    => 'inherit'
+    );
+
+    // Insert the attachment.
+    $attach_id = wp_insert_attachment($attachment, $image_filepath);
+
+    // Require necessary WordPress libraries for handling media.
+    require_once(ABSPATH . 'wp-admin/includes/image.php');
+
+    // Generate the metadata for the attachment, and update the database record.
+    $attach_data = wp_generate_attachment_metadata($attach_id, $image_filepath);
+    wp_update_attachment_metadata($attach_id, $attach_data);
+
+    return $attach_id;
+}
+
+
+/**
+ * Set the WooCommerce product thumbnail.
+ *
+ * @param int $product_id WooCommerce product ID.
+ * @param string $image_path Path to the image file relative to the WordPress uploads directory.
+ * @return void
+ */
+function set_woocommerce_product_thumbnail($product_id, $image_path)
+{
+    $attachment_id = register_image_as_attachment($image_path);
+
+    if (is_wp_error($attachment_id)) {
+        echo 'Error: ' . $attachment_id->get_error_message() . "<br>";
+        return;
+    }
+
+    update_post_meta($product_id, '_thumbnail_id', $attachment_id);
+    echo 'Product thumbnail updated successfully with attachment ID: ' . $attachment_id;
+}
+
+// Example usage
+//$product_id = 10409; // Replace with your actual product ID
+//$image_path = '2024/04/LISA_F-1.jpg'; // Replace with your actual image path relative to the uploads directory
+
+function append_suffix_to_filename($filename, $suffix)
+{
+    // Split the filename into its name and extension parts
+    $file_parts = pathinfo($filename);
+
+    // Build the new filename by inserting the suffix before the extension
+    $new_filename = $file_parts['filename'] . '-' . $suffix . '.' . $file_parts['extension'];
+
+    return $new_filename;
+}
+
+
+
+function get_product_id_from_course($post_id)
+{
+    global $wpdb;
+    $table_name = $wpdb->prefix . 'eb_moodle_course_products'; // Adjust the table name as necessary
+
+    $query = $wpdb->prepare("SELECT product_id FROM {$table_name} WHERE moodle_post_id = %d", $post_id);
+    $product_id = $wpdb->get_var($query);
+
+    return $product_id ? intval($product_id) : null;
+}
+
+
+function fetch_all_post_ids_with_thumbnails($post_type = 'eb_course')
+{
+    $args = array(
+        'posts_per_page' => -1,
+        'post_type'      => $post_type,
+        'post_status'    => 'publish',
+        'fields'         => 'ids'
+    );
+
+    $post_ids = get_posts($args);
+    $thumbnails = array();
+    foreach ($post_ids as $id) {
+        $thumbnail_id = get_post_meta($id, '_thumbnail_id', true);
+        if (!empty($thumbnail_id)) {
+            $thumbnails[$id] = $thumbnail_id;
+        }
+    }
+    return $thumbnails;
+}
+
+// Example usage
+add_action('init', function () {
+    $all_eb_course_thumbnails = fetch_all_post_ids_with_thumbnails('eb_course');
+    foreach ($all_eb_course_thumbnails as $post_id => $thumbnail_id) {
+        $attached_file = get_post_meta($thumbnail_id, '_wp_attached_file', true);
+        if (!empty($attached_file)) {
+           // echo "Post ID: $post_id - Attached File: " . esc_html($attached_file) . "<br/>";
+            $product_id = get_product_id_from_course($post_id);
+            // echo    $product_id."---".$post_id."".$attached_file;
+            $original_filename = $attached_file;
+            $suffix = '1';
+            $new_filename = append_suffix_to_filename($original_filename, $suffix);
+           // set_woocommerce_product_thumbnail($product_id,"2024/04/".$new_filename);
+        } else {
+           // echo "Post ID: $post_id - No attached file found.<br/>";
+        }
+    }
+});
