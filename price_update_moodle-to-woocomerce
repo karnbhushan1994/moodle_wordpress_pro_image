@@ -1,0 +1,66 @@
+// cource price update 
+// Hook into 'wp_loaded' to ensure all plugins and posts are loaded
+add_action('wp_loaded', function() {
+    // Define post type
+    $post_type = 'eb_course';
+
+    // Get all posts of type 'eb_course' that are published
+    $args = array(
+        'posts_per_page' => -1,
+        'post_type'      => $post_type,
+        'post_status'    => 'publish',
+        'fields'         => 'ids'
+    );
+    $post_ids = get_posts($args);
+
+    // Loop through each course post ID
+    foreach ($post_ids as $post_id) {
+        // Fetch the product ID linked to the course
+        $product_id = get_product_id_from_course_prodcut($post_id);
+        
+        // Continue if there is a valid product ID
+        if ($product_id) {
+            // Retrieve course options metadata which contains the price
+            $meta_value = get_post_meta($post_id, 'eb_course_options', true);
+            $data = maybe_unserialize($meta_value);
+
+            // Check if the price data exists and is valid
+            if (is_array($data) && isset($data['course_price'])) {
+                $course_price = $data['course_price'];
+
+                // Update the WooCommerce product price using the retrieved course price
+                update_product_price($product_id, $course_price);
+            }
+        }
+    }
+});
+
+// Function to get the product ID associated with a given course
+function get_product_id_from_course_prodcut($post_id) {
+    global $wpdb;
+    $table_name = $wpdb->prefix . 'eb_moodle_course_products';
+
+    $query = $wpdb->prepare("SELECT product_id FROM {$table_name} WHERE moodle_post_id = %d", $post_id);
+    $product_id = $wpdb->get_var($query);
+
+    return $product_id ? intval($product_id) : null;
+}
+
+// Function to update the WooCommerce product price
+function update_product_price($product_id, $new_price) {
+    $product = wc_get_product($product_id);
+    if ($product) {
+        // Set the new regular price
+        $product->set_regular_price($new_price);
+
+        // Save the changes
+        try {
+            $product->save();
+            error_log('Price updated successfully for product ID: ' . $product_id);
+        } catch (Exception $e) {
+            error_log('Error updating price for product ID: ' . $product_id . ' - ' . $e->getMessage());
+        }
+    } else {
+        error_log('Product not found for ID: ' . $product_id);
+    }
+}
